@@ -1,0 +1,14 @@
+{
+  "name": "Caderneta",
+  "short_name": "Caderneta",
+  "description": "O histórico de manutenção do seu carro, no bolso.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EDF1EF",
+  "theme_color": "#0E5A5E",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "/icone.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

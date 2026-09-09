@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Caderneta">
+  <rect width="512" height="512" rx="112" fill="#0E5A5E"/>
+  <rect x="128" y="96" width="272" height="320" rx="28" fill="#F4F8F6"/>
+  <rect x="128" y="96" width="46" height="320" rx="20" fill="#C9DEDA"/>
+  <g fill="#0E5A5E">
+    <rect x="150" y="140" width="12" height="30" rx="6"/>
+    <rect x="150" y="200" width="12" height="30" rx="6"/>
+    <rect x="150" y="260" width="12" height="30" rx="6"/>
+    <rect x="150" y="320" width="12" height="30" rx="6"/>
+  </g>
+  <g fill="none" stroke="#0E5A5E" stroke-width="18" stroke-linecap="round">
+    <path d="M214 186h150"/>
+    <path d="M214 246h150"/>
+    <path d="M214 306h96"/>
+  </g>
+  <circle cx="352" cy="330" r="46" fill="#0E5A5E"/>
+  <g fill="none" stroke="#F4F8F6" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M334 330h36"/>
+    <path d="M352 312v18"/>
+  </g>
+</svg>
