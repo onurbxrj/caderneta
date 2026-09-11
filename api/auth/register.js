@@ -28,6 +28,9 @@ export default async function handler(req, res) {
     return erro(res, 409, "Já existe uma conta com esse e-mail.");
 
   const id = novoId();
+  // Antes de consumir o convite: o scrypt é lento de propósito, e não há motivo
+  // para o código ficar marcado como usado durante esse tempo todo.
+  const senhaHash = await hashSenha(senha);
 
   // O UPDATE condicional é quem realmente decide a corrida: se duas requisições
   // chegarem com o mesmo código ao mesmo tempo, só uma altera uma linha aqui.
@@ -42,10 +45,21 @@ export default async function handler(req, res) {
       return erro(res, 400, "Esse convite já foi usado.");
   }
 
-  await executar(
-    "INSERT INTO users (id, email, nome, senha_hash, criado_em) VALUES (?, ?, ?, ?, ?)",
-    [id, email, nome, await hashSenha(senha), Date.now()]
-  );
+  try {
+    await executar(
+      "INSERT INTO users (id, email, nome, senha_hash, criado_em) VALUES (?, ?, ?, ?, ?)",
+      [id, email, nome, senhaHash, Date.now()]
+    );
+  } catch (e) {
+    // Sem isto o código ficaria queimado sem conta nenhuma criada. O AND usado_por = ?
+    // devolve apenas o consumo desta requisição, nunca o de outra pessoa.
+    if (jaTemGente)
+      await executar(
+        "UPDATE invites SET usado_por = NULL, usado_em = NULL WHERE codigo = ? AND usado_por = ?",
+        [convite, id]
+      );
+    throw e;
+  }
 
   await criarSessao(res, id);
   return responder(res, 201, { id, email, nome });
