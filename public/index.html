@@ -363,7 +363,7 @@ table.db td.strong{color:var(--ink);font-weight:500}
 
 <main class="app" id="view"></main>
 
-<button class="fab" id="fab" type="button" aria-label="Novo lançamento">
+<button class="fab" id="fab" type="button" aria-label="Registrar abastecimento ou manutenção">
   <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
 </button>
 
@@ -466,7 +466,7 @@ function addMonthsIso(iso,m){
 }
 
 /* ============================== estado ============================== */
-let state={vehicles:[],maints:[],refuels:[],settings:{activeVehicle:null}};
+let state={vehicles:[],maints:[],refuels:[],settings:{activeVehicle:null,tema:"auto"}};
 let usuario=null, primeiroAcesso=false, modoAuth="entrar";
 let tab="resumo";
 let filters={q:"",cat:"todas",periodo:"tudo",kmMin:"",kmMax:""};
@@ -478,7 +478,24 @@ const LS_PREF="caderneta-pref-v1";
 function salvarPref(){try{localStorage.setItem(LS_PREF,JSON.stringify(state.settings));}catch(e){}}
 function carregarPref(){
   try{const d=JSON.parse(localStorage.getItem(LS_PREF)||"{}");
-    if(d&&typeof d==="object")state.settings=Object.assign({activeVehicle:null},d);}catch(e){}
+    if(d&&typeof d==="object")state.settings=Object.assign({activeVehicle:null,tema:"auto"},d);}catch(e){}
+}
+/* O CSS já traz a paleta escura e o override por data-theme; aqui só escolhemos qual vale.
+   "auto" tira o atributo e devolve a decisão ao prefers-color-scheme do aparelho. */
+function aplicarTema(){
+  const t=state.settings.tema||"auto";
+  const raiz=document.documentElement;
+  if(t==="claro")raiz.setAttribute("data-theme","light");
+  else if(t==="escuro")raiz.setAttribute("data-theme","dark");
+  else raiz.removeAttribute("data-theme");
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta){
+    let escuro=t==="escuro";
+    if(t==="auto"){
+      try{ escuro=matchMedia("(prefers-color-scheme: dark)").matches; }catch(e){ escuro=false; }
+    }
+    meta.setAttribute("content",escuro?"#0A1211":"#0E5A5E");
+  }
 }
 function activeVehicle(){
   const id=state.settings.activeVehicle;
@@ -508,9 +525,17 @@ async function api(caminho,opcoes){
     o.headers["Content-Type"]="application/json";
     o.body=JSON.stringify(o.body);
   }
+  // Sem isto uma requisição pendurada deixa o botão desabilitado para sempre.
+  // 30s fica acima do maxDuration de 15s do vercel.json, então o servidor desiste antes.
+  const ctrl=new AbortController();
+  const relogio=setTimeout(()=>ctrl.abort(),30000);
+  o.signal=ctrl.signal;
   let r;
   try{ r=await fetch("/api"+caminho,o); }
-  catch(e){ throw new Error("Sem conexão agora. Tente de novo em instantes."); }
+  catch(e){ throw new Error(ctrl.signal.aborted
+    ?"A conexão demorou demais. Tente de novo."
+    :"Sem conexão agora. Tente de novo em instantes."); }
+  finally{ clearTimeout(relogio); }
   if(r.status===401){ usuario=null; mostrarLogin(); throw new Error("Sua sessão expirou."); }
   const tipo=r.headers.get("content-type")||"";
   const corpo=tipo.indexOf("json")>-1?await r.json().catch(()=>({})):null;
@@ -1639,9 +1664,21 @@ function openSettings(){
       '<button class="menu-item" id="sExport">'+svg("gastos")+'<span class="t">Exportar backup (JSON)<div style="font-size:12px;color:var(--muted);font-weight:400">Cópia completa, para guardar</div></span>'+svg("chev")+'</button>'+
       '<button class="menu-item" id="sImport">'+svg("historico")+'<span class="t">Importar backup<div style="font-size:12px;color:var(--muted);font-weight:400">Cola o JSON de um backup</div></span>'+svg("chev")+'</button>'+
     '</section>'+
+    '<div class="field"><label>Aparência</label><div class="chips" id="temaChips"></div>'+
+      '<span class="hint">Automático segue o ajuste do seu celular.</span></div>'+
     '<p class="hint" style="text-align:center;font-size:12.5px">Conectado como '+esc(usuario?usuario.email:"")+'.</p>',
     '<button class="btn ghost" data-close="1">Fechar</button><button class="btn danger" id="sSair">Sair da conta</button>');
   $("#modal").querySelectorAll("[data-close]").forEach(b=>b.onclick=closeSheet);
+  function pintarTema(){
+    const atual=state.settings.tema||"auto";
+    const box=$("#temaChips");
+    box.innerHTML=[["auto","Automático"],["claro","Claro"],["escuro","Escuro"]].map(([k,l])=>
+      '<button type="button" class="fchip" data-tema="'+k+'" aria-pressed="'+(atual===k)+'">'+l+'</button>').join("");
+    box.querySelectorAll("[data-tema]").forEach(b=>b.onclick=()=>{
+      state.settings.tema=b.dataset.tema;salvarPref();aplicarTema();pintarTema();
+    });
+  }
+  pintarTema();
   $("#sVeh").onclick=()=>{closeSheet();openVehiclePicker();};
   $("#sDb").onclick=()=>{closeSheet();openDatabase();};
   $("#sConv").onclick=()=>{closeSheet();openConvites();};
@@ -1853,6 +1890,7 @@ $("#authForm").onsubmit=async e=>{
 document.addEventListener("keydown",e=>{ if(e.key==="Escape")closeSheet(); });
 
 carregarPref();
+aplicarTema();
 render();
 iniciar();
 })();
