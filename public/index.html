@@ -425,11 +425,20 @@ const TIPOS_COMB=[
   {slug:"gnv", label:"GNV"}
 ];
 const COMB_LABEL=Object.fromEntries(TIPOS_COMB.map(c=>[c.slug,c.label]));
+/* Mínimos para arriscar uma estimativa de consumo sem tanque cheio. */
+const MIN_AB_ESTIMATIVA=4, MIN_KM_ESTIMATIVA=1000;
 
 /* ============================== util ============================== */
 const $=(s,r)=>(r||document).querySelector(s);
 const uid=()=>(crypto&&crypto.randomUUID?crypto.randomUUID():"id"+Date.now()+Math.random().toString(16).slice(2));
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+/* Só http(s) vira link clicável: um javascript: colado no campo fica como texto. */
+function linkSeguro(url){
+  const u=String(url||"");
+  return /^https?:\/\//i.test(u)
+    ? '<a href="'+esc(u)+'" target="_blank" rel="noopener" style="color:var(--accent)">abrir link</a>'
+    : esc(u);
+}
 const MESES=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 const MESES_L=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const brl=n=>(Number(n)||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
@@ -536,7 +545,7 @@ async function putMaint(m){
 async function delMaint(id){
   await api("/maintenances/"+id,{method:"DELETE"});
   state.maints=state.maints.filter(m=>m.id!==id);
-  delete fotosCache[id];
+  esquecerFoto(id);
   render();
 }
 async function putRefuel(a){
@@ -591,6 +600,12 @@ function comprimirFoto(file){
     fr.readAsDataURL(file);
   });
 }
+/* Object URL sem revoke fica preso na memória do navegador até a aba fechar. */
+function esquecerFoto(id){
+  const url=fotosCache[id];
+  if(url){try{URL.revokeObjectURL(url);}catch(e){}}
+  delete fotosCache[id];
+}
 /* A imagem vem pela rota autenticada; a URL do armazenamento nunca chega ao navegador. */
 async function lerFoto(id){
   if(fotosCache[id])return fotosCache[id];
@@ -603,13 +618,13 @@ async function lerFoto(id){
 }
 async function gravarFoto(id,dataUrl){
   await api("/photos/"+id,{method:"POST",body:{imagem:dataUrl}});
-  delete fotosCache[id];
+  esquecerFoto(id);
   const m=state.maints.find(x=>x.id===id);if(m)m.temFoto=true;
   return true;
 }
 async function apagarFoto(id){
   try{await api("/photos/"+id,{method:"DELETE"});}catch(e){}
-  delete fotosCache[id];
+  esquecerFoto(id);
   const m=state.maints.find(x=>x.id===id);if(m)m.temFoto=false;
 }
 
@@ -640,7 +655,7 @@ function pintarAuth(){
 async function sair(){
   try{await api("/auth/logout",{method:"POST"});}catch(e){}
   usuario=null;state.vehicles=[];state.maints=[];state.refuels=[];
-  Object.keys(fotosCache).forEach(k=>delete fotosCache[k]);
+  Object.keys(fotosCache).forEach(esquecerFoto);
   modoAuth="entrar";mostrarLogin();
 }
 async function iniciar(){
@@ -689,20 +704,41 @@ function totals(list){
   let t=0;list.forEach(m=>t+=Number(m.valorTotal)||0);return t;
 }
 /* Tanque cheio a tanque cheio: os litros de parciais entram no próximo cheio.
-   A média divide distância total por litros totais, sem enviesar para trechos curtos. */
+   A média divide distância total por litros totais, sem enviesar para trechos curtos.
+
+   Sem nenhum par de tanques cheios, estima pela série inteira: o combustível que
+   levou do primeiro ao último abastecimento é o que foi colocado depois do primeiro,
+   errando só pela diferença de nível do tanque nas duas pontas. Esse erro é limitado
+   pelo tamanho do tanque e não cresce — os litros acumulados sim, então a estimativa
+   fica mais precisa sozinha. */
 function consumos(vid){
-  const porId={};
-  let baseKm=null, litrosAcum=0, valorAcum=0, dist=0, litros=0, valor=0;
-  refuelsOf(vid).forEach(r=>{
-    if(baseKm!=null){litrosAcum+=r.litros||0;valorAcum+=r.valorTotal||0;}
+  const lista=refuelsOf(vid);
+  const porId={}, trechos={};
+  let baseKm=null, baseData=null, litrosAcum=0, valorAcum=0, nAcum=0;
+  let dist=0, litros=0, valor=0;
+  lista.forEach(r=>{
+    if(baseKm!=null){litrosAcum+=r.litros||0;valorAcum+=r.valorTotal||0;nAcum++;}
     if(!r.tanqueCheio)return;
     if(baseKm!=null&&r.km>baseKm&&litrosAcum>0){
       porId[r.id]=(r.km-baseKm)/litrosAcum;
+      trechos[r.id]={de:baseData,ate:r.data,dist:r.km-baseKm,litros:litrosAcum,n:nAcum};
       dist+=r.km-baseKm;litros+=litrosAcum;valor+=valorAcum;
     }
-    baseKm=r.km;litrosAcum=0;valorAcum=0;
+    baseKm=r.km;baseData=r.data;litrosAcum=0;valorAcum=0;nAcum=0;
   });
-  return {porId:porId, media:litros?dist/litros:0, custoKm:dist?valor/dist:0};
+
+  const est={dist:0,litros:0,valor:0,n:lista.length,media:0,pronta:false,faltaN:0,faltaKm:0};
+  if(lista.length>=2){
+    est.dist=(lista[lista.length-1].km||0)-(lista[0].km||0);
+    for(let i=1;i<lista.length;i++){est.litros+=lista[i].litros||0;est.valor+=lista[i].valorTotal||0;}
+    if(est.dist>0&&est.litros>0)est.media=est.dist/est.litros;
+  }
+  est.faltaN=Math.max(0,MIN_AB_ESTIMATIVA-lista.length);
+  est.faltaKm=Math.max(0,MIN_KM_ESTIMATIVA-est.dist);
+  est.pronta=est.media>0&&!est.faltaN&&!est.faltaKm;
+
+  return {porId:porId, trechos:trechos, dist:dist, litros:litros,
+    media:litros?dist/litros:0, custoKm:dist?valor/dist:0, est:est};
 }
 
 /* ============================== ícones ============================== */
@@ -1040,18 +1076,23 @@ function viewTanque(veh){
   const mes=today().slice(0,7);
   const litros=refs.reduce((s,a)=>s+(a.litros||0),0);
   const gastoMes=totals(refs.filter(a=>(a.data||"").slice(0,7)===mes));
+  const medido=c.media>0, estimando=!medido&&c.est.pronta;
+  const kml=medido?c.media:(estimando?c.est.media:0);
+  const custoKm=medido?c.custoKm:(estimando&&c.est.dist?c.est.valor/c.est.dist:0);
+  const aviso=hintConsumo(c);
 
   h+='<section class="card odo">'+
     '<div class="odo-top">'+
-      '<div><div class="eyebrow">Consumo médio</div>'+
+      '<div><div class="eyebrow">'+(estimando?"Consumo estimado":"Consumo médio")+'</div>'+
         '<div class="odo-km" style="margin-top:4px"><b class="num">'+
-        (c.media?c.media.toLocaleString("pt-BR",{minimumFractionDigits:1,maximumFractionDigits:1}):"—")+
+        (kml?kml.toLocaleString("pt-BR",{minimumFractionDigits:1,maximumFractionDigits:1}):"—")+
         '</b><small>km/L</small></div></div>'+
       '<div style="text-align:right"><div class="eyebrow">Custo/km</div>'+
         '<div class="num" style="font-size:18px;font-weight:600;margin-top:6px">'+
-        (c.custoKm?"R$ "+c.custoKm.toFixed(2).replace(".",","):"—")+'</div></div>'+
+        (custoKm?"R$ "+custoKm.toFixed(2).replace(".",","):"—")+'</div></div>'+
     '</div>'+
-    (c.media?'':'<div class="odo-sub">O consumo aparece a partir do segundo abastecimento de tanque cheio.</div>')+
+    (aviso?'<div class="odo-sub">'+esc(aviso)+'</div>':'')+
+    (kml?'<div><button class="link" id="tkConta">Ver como foi calculado</button></div>':'')+
     '<div class="odo-strip">'+
       '<div><div class="k">Abastecimentos</div><div class="v">'+refs.length+'</div></div>'+
       '<div><div class="k">Litros</div><div class="v">'+Math.round(litros).toLocaleString("pt-BR")+'</div></div>'+
@@ -1078,12 +1119,61 @@ function viewTanque(veh){
   return h;
 }
 
+/* Diz por que ainda não há número, e o que falta para haver. */
+function hintConsumo(c){
+  if(c.media>0)return "";
+  if(c.est.pronta)
+    return "Estimado pela série toda, porque não há dois tanques cheios seguidos. "+
+           "Fica mais preciso a cada abastecimento; para um número exato, encha o tanque duas vezes.";
+  const falta=[];
+  if(c.est.faltaN)falta.push(c.est.faltaN+" abastecimento"+(c.est.faltaN===1?"":"s"));
+  if(c.est.faltaKm)falta.push(km(c.est.faltaKm));
+  return "Encha o tanque em dois abastecimentos para medir o consumo"+
+    (falta.length?" — ou registre mais "+falta.join(" e ")+" para ver uma estimativa.":".");
+}
+function openConta(veh){
+  const c=consumos(veh.id);
+  let corpo;
+  if(c.media>0){
+    corpo='<p class="hint" style="font-size:12.5px">Cada trecho vai de um tanque cheio ao seguinte. '+
+      'Os litros de abastecimentos parciais entram no trecho em que foram gastos.</p>'+
+      '<section class="card rows" style="overflow:hidden">'+
+      Object.keys(c.trechos).map(id=>{
+        const t=c.trechos[id];
+        return '<div class="row" style="display:block">'+
+          '<span class="t">'+km(t.dist)+' ÷ '+litrosFmt(t.litros)+' = '+kmlFmt(c.porId[id])+'</span>'+
+          '<span class="s">'+fmtDate(t.de)+' → '+fmtDate(t.ate)+' · '+t.n+
+            ' abastecimento'+(t.n===1?"":"s")+'</span>'+
+        '</div>';
+      }).join("")+'</section>'+
+      '<div class="total-box"><span class="k">Média geral</span><span class="v">'+kmlFmt(c.media)+'</span></div>'+
+      '<p class="hint" style="font-size:12.5px">A média divide '+km(c.dist)+' por '+litrosFmt(c.litros)+
+        ' de uma vez — e não é a média dos trechos, que daria peso demais aos mais curtos.</p>';
+  }else{
+    const e=c.est;
+    corpo='<p class="hint" style="font-size:12.5px">Sem dois tanques cheios seguidos, o consumo é estimado '+
+      'pela série inteira: a distância do primeiro ao último abastecimento, dividida pelos litros colocados '+
+      'depois do primeiro.</p>'+
+      '<div class="det-grid">'+
+        '<div><div class="k">Distância</div><div class="v num">'+km(e.dist)+'</div></div>'+
+        '<div><div class="k">Litros contados</div><div class="v num">'+litrosFmt(e.litros)+'</div></div>'+
+        '<div><div class="k">Abastecimentos</div><div class="v num">'+e.n+'</div></div>'+
+        '<div><div class="k">Estimativa</div><div class="v num">'+kmlFmt(e.media)+'</div></div>'+
+      '</div>'+
+      '<p class="hint" style="font-size:12.5px">A única imprecisão é o quanto o tanque estava diferente no '+
+      'primeiro e no último abastecimento. Esse erro não cresce, mas os litros somados sim — por isso a '+
+      'estimativa melhora sozinha conforme você registra.</p>';
+  }
+  openSheet("Como o consumo é calculado",corpo,'<button class="btn ghost block" data-close="1">Fechar</button>');
+}
+
 /* -------- binds da view -------- */
 function bindView(veh){
   const v=$("#view");
   v.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openDetail(b.dataset.open));
   v.querySelectorAll("[data-ab]").forEach(b=>b.onclick=()=>openRefuelSheet(b.dataset.ab));
   const tk=$("#tkNew"); if(tk)tk.onclick=()=>openRefuelSheet(null);
+  const tc=$("#tkConta"); if(tc)tc.onclick=()=>openConta(veh);
   v.querySelectorAll("[data-goto]").forEach(b=>b.onclick=()=>{tab=b.dataset.goto;render();window.scrollTo(0,0);});
   const ed=$("#editVeh"); if(ed)ed.onclick=()=>openVehicleSheet(veh.id);
   const uk=$("#updKm"); if(uk)uk.onclick=()=>openKmSheet(veh);
@@ -1385,6 +1475,11 @@ function combPadrao(veh){
   if(ult)return ult.combustivel;
   return {Gasolina:"gasolina",Etanol:"etanol",Diesel:"diesel",GNV:"gnv"}[veh.combustivel]||"gasolina";
 }
+/* Quem sempre abastece do mesmo jeito não deve ter que corrigir o seletor toda vez. */
+function cheioPadrao(veh){
+  const ult=refuelsOf(veh.id).slice(-1)[0];
+  return ult?ult.tanqueCheio:true;
+}
 function openRefuelSheet(id){
   const r=id?state.refuels.find(x=>x.id===id):null;
   const veh=(r&&state.vehicles.find(v=>v.id===r.vehicleId))||activeVehicle();
@@ -1393,7 +1488,7 @@ function openRefuelSheet(id){
   const dec=(n,casas)=>n?Number(n).toFixed(casas).replace(".",","):"";
   const ultimo=refuelsOf(veh.id).filter(x=>!r||x.id!==r.id).slice(-1)[0];
   const combAtual=r?r.combustivel:combPadrao(veh);
-  let cheio=r?r.tanqueCheio:true;
+  let cheio=r?r.tanqueCheio:cheioPadrao(veh);
 
   openSheet(r?"Editar abastecimento":"Novo abastecimento",
     '<div class="grid2">'+
@@ -1419,7 +1514,7 @@ function openRefuelSheet(id){
       '<span class="hint">Preencha dois dos três campos — o terceiro é calculado.</span></div>'+
 
     '<div class="field"><label>Tanque</label><div class="chips" id="acheio"></div>'+
-      '<span class="hint">O consumo é calculado entre dois abastecimentos de tanque cheio.</span></div>'+
+      '<span class="hint" id="acheioHint"></span></div>'+
 
     '<div class="field"><label for="aposto">Posto</label>'+
       '<input id="aposto" type="text" list="dl-posto" placeholder="Ex.: Posto Ipiranga da Av. Brasil" value="'+g("posto")+'">'+
@@ -1435,6 +1530,9 @@ function openRefuelSheet(id){
     box.innerHTML=[[true,"Cheio"],[false,"Parcial"]].map(([v,l])=>
       '<button type="button" class="fchip" data-cheio="'+v+'" aria-pressed="'+(cheio===v)+'">'+l+'</button>').join("");
     box.querySelectorAll("[data-cheio]").forEach(b=>b.onclick=()=>{cheio=b.dataset.cheio==="true";pintarCheio();});
+    $("#acheioHint").textContent=cheio
+      ?"Este abastecimento fecha uma medição de consumo."
+      :"Os litros entram na próxima medição de tanque cheio.";
   }
   pintarCheio();
 
@@ -1498,7 +1596,7 @@ function openDetail(id){
       (m.executadoPor?cell("Quem realizou",esc(m.executadoPor),true):"")+
       (m.proximaKm?cellN("Próxima em",km(m.proximaKm)):"")+
       (m.proximaData?cellN("Próxima data",fmtDate(m.proximaData)):"")+
-      (m.comprovante?cell("Comprovante",'<a href="'+esc(m.comprovante)+'" target="_blank" rel="noopener" style="color:var(--accent)">abrir link</a>',true):"")+
+      (m.comprovante?cell("Comprovante",linkSeguro(m.comprovante),true):"")+
       (m.observacoes?cell("Observações",esc(m.observacoes).replace(/\n/g,"<br>"),true):"")+
     '</div>'+
     (m.temFoto?'<div id="detFoto"><div class="photo-ph">Carregando o comprovante…</div></div>':'');
