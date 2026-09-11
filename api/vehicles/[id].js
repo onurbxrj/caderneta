@@ -20,6 +20,7 @@ export default async function handler(req, res) {
   for (const l of comFoto) await apagarBlob(l.foto_url);
 
   await executar("DELETE FROM maintenances WHERE user_id = ? AND vehicle_id = ?", [user.id, id]);
+  await executar("DELETE FROM refuels WHERE user_id = ? AND vehicle_id = ?", [user.id, id]);
   await executar("DELETE FROM vehicles WHERE id = ? AND user_id = ?", [id, user.id]);
   return responder(res, 200, { ok: true });
 }

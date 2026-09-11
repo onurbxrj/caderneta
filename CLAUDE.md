@@ -47,7 +47,7 @@ if (!user) return;
 
 This is the single most important invariant in the codebase. The user id comes **only** from the session cookie, never from the request body or URL. Every read, update and delete carries `AND user_id = ?` — including `UPDATE`/`DELETE` statements, which is what prevents one account from editing or deleting another's rows even when an id is guessed. When a row is not found under the caller's `user_id`, routes return **404, not 403**, so existence is not leaked.
 
-When adding a query touching `vehicles`, `maintenances`, `sessions` or `invites`, the `user_id` filter is mandatory — an ownership check followed by an unfiltered write is a security bug, not a style issue.
+When adding a query touching `vehicles`, `maintenances`, `refuels`, `sessions` or `invites`, the `user_id` filter is mandatory — an ownership check followed by an unfiltered write is a security bug, not a style issue.
 
 ### Layers
 
