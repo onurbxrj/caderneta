@@ -1530,7 +1530,7 @@ function openRefuelSheet(id){
 
     '<div class="grid2">'+
       '<div class="field kminput"><label for="alitros">Litros</label>'+
-        '<input id="alitros" type="text" inputmode="decimal" placeholder="0,00" value="'+dec(r&&r.litros,2)+'"></div>'+
+        '<input id="alitros" type="text" inputmode="decimal" placeholder="0,000" value="'+dec(r&&r.litros,3)+'"></div>'+
       '<div class="field"><label for="apreco">Preço por litro</label><div class="money">'+
         '<input id="apreco" type="text" inputmode="decimal" placeholder="0,000" value="'+dec(r&&r.precoLitro,3)+'"></div></div>'+
     '</div>'+
@@ -1575,7 +1575,7 @@ function openRefuelSheet(id){
   $("#asave").onclick=async()=>{
     const kmv=parseKm($("#akm").value);
     if(kmv==null){toast("Informe a quilometragem");return;}
-    const litros=parseMoney(iL.value);
+    const litros=parseMoney(iL.value,3);
     if(!litros){toast("Informe quantos litros foram abastecidos");return;}
     const rec={
       id:r?r.id:undefined, vehicleId:veh.id,

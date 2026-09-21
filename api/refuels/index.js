@@ -21,7 +21,7 @@ export default async function handler(req, res) {
   const c = await lerCorpo(req);
   const data = dataISO(c.data);
   const km = inteiro(c.km);
-  const litros = decimal(c.litros);
+  const litros = decimal(c.litros, 3); // bombas de combustível mostram 3 casas
   const combustivel = COMBUSTIVEIS.includes(c.combustivel) ? c.combustivel : "gasolina";
   if (!data) return erro(res, 400, "Informe a data do abastecimento.");
   if (km == null) return erro(res, 400, "Informe a quilometragem.");
